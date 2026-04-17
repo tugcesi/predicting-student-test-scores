@@ -1,22 +1,67 @@
-# Configuration file for predicting student test scores
+"""Project configuration for student exam score prediction."""
 
-# Feature configurations
-FEATURES = {
-    'feature1': 'value1',
-    'feature2': 'value2',
-    # Add more features as needed
+from pathlib import Path
+
+# Core feature groups
+NUMERIC_FEATURES = [
+    "age",
+    "study_hours",
+    "class_attendance",
+    "sleep_hours",
+]
+
+CATEGORICAL_FEATURES = [
+    "gender",
+    "course",
+    "internet_access",
+    "study_method",
+    "sleep_quality",
+    "facility_rating",
+    "exam_difficulty",
+]
+
+ENGINEERED_FEATURES = [
+    "study_efficiency",
+    "sleep_study_ratio",
+    "engagement_score",
+    "study_hours_squared",
+    "class_attendance_squared",
+    "sleep_quality_encoded",
+    "facility_rating_encoded",
+    "exam_difficulty_encoded",
+    "overall_performance",
+    "study_sleep_balance",
+    "effort_score",
+    "attendance_study_interaction",
+    "difficulty_adjusted_effort",
+]
+
+# Ordinal encoding maps
+SLEEP_QUALITY_MAP = {"poor": 1, "average": 2, "good": 3}
+FACILITY_MAP = {"low": 1, "medium": 2, "high": 3}
+DIFFICULTY_MAP = {"easy": 1, "moderate": 2, "hard": 3}
+
+# Input validation ranges
+FEATURE_RANGES = {
+    "age": (17, 24),
+    "study_hours": (0.0, 10.0),
+    "class_attendance": (0.0, 100.0),
+    "sleep_hours": (0.0, 12.0),
 }
 
-# Encoding maps
-ENCODING_MAPS = {
-    'category1': {'A': 1, 'B': 2},
-    'category2': {'X': 1, 'Y': 2},
-    # Add more encoding maps as needed
+# Dropdown options
+CATEGORY_OPTIONS = {
+    "gender": ["female", "male", "other"],
+    "course": ["b.com", "b.sc", "b.tech", "ba", "bba", "bca", "diploma"],
+    "internet_access": ["yes", "no"],
+    "study_method": ["coaching", "group study", "mixed", "online videos", "self-study"],
+    "sleep_quality": ["poor", "average", "good"],
+    "facility_rating": ["low", "medium", "high"],
+    "exam_difficulty": ["easy", "moderate", "hard"],
 }
 
-# Constants
-CONSTANTS = {
-    'CONSTANT1': 3.14,
-    'CONSTANT2': 42,
-    # Add more constants as needed
-}
+# Model artifact paths
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_DIR = BASE_DIR / "models"
+MODEL_PATH = MODEL_DIR / "xgb_model.joblib"
+ENCODERS_PATH = MODEL_DIR / "encoders.joblib"
