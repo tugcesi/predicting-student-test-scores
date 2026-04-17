@@ -38,7 +38,7 @@ pip install -r requirements.txt
    ```
 3. Train and save model artifacts:
    ```bash
-   python train_model.py
+   python save_model.py
    ```
 
 ## Usage
