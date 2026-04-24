@@ -1,19 +1,17 @@
 """
 🎓 Student Exam Score Prediction — Hugging Face Spaces
-Bağımlılıklar: models/xgb_model.joblib + models/encoders.joblib
+Model: testscore_model.keras (Deep Learning)
+Bağımlılık: sadece models/testscore_model.keras
 """
 
 from __future__ import annotations
-
-import json
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import tensorflow as tf
 
 st.set_page_config(
     page_title="🎓 Student Exam Score Prediction",
@@ -21,14 +19,10 @@ st.set_page_config(
     layout="wide",
 )
 
-MODEL_PATH    = Path("models/xgb_model.joblib")
-ENCODERS_PATH = Path("models/encoders.joblib")
+# ─── Model Yolu ───────────────────────────────────────────────────────────────
+MODEL_PATH = Path("models/testscore_model.keras")
 
-SLEEP_QUALITY_MAP = {"poor": 1, "average": 2, "good": 3}
-FACILITY_MAP      = {"low": 1,  "medium": 2, "high": 3}
-DIFFICULTY_MAP    = {"easy": 1, "moderate": 2, "hard": 3}
-_EPSILON = 1e-6
-
+# ─── Sabitler ─────────────────────────────────────────────────────────────────
 CATEGORY_OPTIONS = {
     "gender":          ["female", "male", "other"],
     "course":          ["b.com", "b.sc", "b.tech", "ba", "bba", "bca", "diploma"],
@@ -39,60 +33,133 @@ CATEGORY_OPTIONS = {
     "exam_difficulty": ["easy", "moderate", "hard"],
 }
 
-def load_artifacts():
-    if not MODEL_PATH.exists() or not ENCODERS_PATH.exists():
-        return None, None
-    model    = joblib.load(MODEL_PATH)
-    encoders = joblib.load(ENCODERS_PATH)
-    return model, encoders
+# ─── Feature sırası (notebook pd.get_dummies drop_first=True ile aynı) ───────
+FEATURE_COLS = [
+    "study_hours",
+    "class_attendance",
+    "sleep_hours",
+    "gender_male",
+    "gender_other",
+    "course_b.sc",
+    "course_b.tech",
+    "course_ba",
+    "course_bba",
+    "course_bca",
+    "course_diploma",
+    "sleep_quality_good",
+    "sleep_quality_poor",
+    "study_method_group study",
+    "study_method_mixed",
+    "study_method_online videos",
+    "study_method_self-study",
+    "facility_rating_low",
+    "facility_rating_medium",
+    "exam_difficulty_hard",
+    "exam_difficulty_moderate",
+]
 
-def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
-    d = df.copy()
-    d["sleep_quality_encoded"]        = d["sleep_quality"].map(SLEEP_QUALITY_MAP).fillna(0)
-    d["facility_rating_encoded"]      = d["facility_rating"].map(FACILITY_MAP).fillna(0)
-    d["exam_difficulty_encoded"]      = d["exam_difficulty"].map(DIFFICULTY_MAP).fillna(0)
-    d["study_efficiency"]             = d["study_hours"] * (d["class_attendance"] / 100.0)
-    d["sleep_study_ratio"]            = d["sleep_hours"] / (d["study_hours"] + _EPSILON)
-    d["engagement_score"]             = (d["class_attendance"] + d["study_hours"] * 10) / 2
-    d["study_hours_squared"]          = d["study_hours"] ** 2
-    d["class_attendance_squared"]     = d["class_attendance"] ** 2
-    d["overall_performance"]          = (
-        d["study_efficiency"]
-        + 2 * d["sleep_quality_encoded"]
-        + 2 * d["facility_rating_encoded"]
-        - d["exam_difficulty_encoded"]
-    )
-    d["study_sleep_balance"]          = np.abs(d["study_hours"] - d["sleep_hours"])
-    d["effort_score"]                 = (
-        0.6 * d["study_hours"]
-        + 0.3 * d["class_attendance"]
-        + 0.1 * d["sleep_quality_encoded"] * 10
-    )
-    d["attendance_study_interaction"] = d["class_attendance"] * d["study_hours"]
-    d["difficulty_adjusted_effort"]   = d["effort_score"] / (d["exam_difficulty_encoded"] + 1)
-    return d
+# ─── StandardScaler parametreleri (notebook'tan alındı) ──────────────────────
+SCALER_MEAN = np.array([
+    4.002337406507937,
+    71.98726138412698,
+    7.072758031746033,
+    0.33427460317460317,
+    0.3350746031746032,
+    0.17706984126984127,
+    0.2083111111111111,
+    0.09839523809523809,
+    0.12006984126984127,
+    0.14082698412698413,
+    0.07924444444444445,
+    0.33823650793650795,
+    0.33916666666666667,
+    0.19525238095238096,
+    0.19537460317460317,
+    0.1921857142857143,
+    0.20814444444444444,
+    0.3371079365079365,
+    0.3398126984126984,
+    0.1579015873015873,
+    0.5618761904761905,
+], dtype=np.float32)
 
-def prepare_input(payload: dict, encoders: dict) -> pd.DataFrame:
-    df = pd.DataFrame([payload])
-    df = feature_engineering(df)
+SCALER_SCALE = np.array([
+    2.35987841557206,
+    17.430083991449198,
+    1.74480960682091,
+    0.47173625347970105,
+    0.47201653941571303,
+    0.38172779906959153,
+    0.40610047044883535,
+    0.29784830906926346,
+    0.32504318864925685,
+    0.34784298852885087,
+    0.2701199038744383,
+    0.47310947214722365,
+    0.473426487312327,
+    0.3963948646044841,
+    0.39648879884426685,
+    0.39401822992116,
+    0.40598070728959273,
+    0.4727220913510363,
+    0.4736454670005603,
+    0.36464870221793805,
+    0.4961565650600163,
+], dtype=np.float32)
 
-    course_enc       = encoders.get("course_encoder", {})
-    study_method_enc = encoders.get("study_method_encoder", {})
-    gender_cols      = encoders.get("gender_columns", [])
-    feat_cols        = encoders.get("feature_columns", [])
+# ─── Model Yükleme ────────────────────────────────────────────────────────────
+def load_model():
+    if not MODEL_PATH.exists():
+        return None
+    return tf.keras.models.load_model(str(MODEL_PATH))
 
-    course_mean = float(np.mean(list(course_enc.values()))) if course_enc else 0.0
-    method_mean = float(np.mean(list(study_method_enc.values()))) if study_method_enc else 0.0
-    df["course_encoded"]       = df["course"].map(course_enc).fillna(course_mean)
-    df["study_method_encoded"] = df["study_method"].map(study_method_enc).fillna(method_mean)
+# ─── Input Hazırlama ──────────────────────────────────────────────────────────
+def prepare_input(payload: dict) -> np.ndarray:
+    row = {col: 0.0 for col in FEATURE_COLS}
 
-    for col in gender_cols:
-        df[col] = (df["gender"] == col.replace("gender_", "")).astype(int)
+    row["study_hours"]      = float(payload["study_hours"])
+    row["class_attendance"] = float(payload["class_attendance"])
+    row["sleep_hours"]      = float(payload["sleep_hours"])
 
-    df["internet_access_binary"] = df["internet_access"].map({"yes": 1, "no": 0}).fillna(0)
-    df = df.reindex(columns=feat_cols, fill_value=0)
-    return df.astype(np.float32)
+    gender = payload["gender"]
+    if gender == "male":
+        row["gender_male"] = 1.0
+    elif gender == "other":
+        row["gender_other"] = 1.0
 
+    course = payload["course"]
+    course_key = f"course_{course}"
+    if course_key in row:
+        row[course_key] = 1.0
+
+    sq = payload["sleep_quality"]
+    if sq == "good":
+        row["sleep_quality_good"] = 1.0
+    elif sq == "poor":
+        row["sleep_quality_poor"] = 1.0
+
+    sm = payload["study_method"]
+    sm_key = f"study_method_{sm}"
+    if sm_key in row:
+        row[sm_key] = 1.0
+
+    fr = payload["facility_rating"]
+    if fr == "low":
+        row["facility_rating_low"] = 1.0
+    elif fr == "medium":
+        row["facility_rating_medium"] = 1.0
+
+    ed = payload["exam_difficulty"]
+    if ed == "hard":
+        row["exam_difficulty_hard"] = 1.0
+    elif ed == "moderate":
+        row["exam_difficulty_moderate"] = 1.0
+
+    x = np.array([row[col] for col in FEATURE_COLS], dtype=np.float32)
+    x = (x - SCALER_MEAN) / SCALER_SCALE
+    return x.reshape(1, -1)
+
+# ─── Yardımcı ─────────────────────────────────────────────────────────────────
 def classify_performance(score: float) -> str:
     if score >= 90: return "Excellent 🏆"
     if score >= 80: return "Very Good 🌟"
@@ -132,64 +199,19 @@ def create_gauge(score: float) -> go.Figure:
     fig.update_layout(height=280, margin=dict(t=60, b=0, l=30, r=30))
     return fig
 
-def create_feature_importance(model, encoders: dict):
-    if not hasattr(model, "feature_importances_"):
-        return None
-    feat_cols = encoders.get("feature_columns", [])
-    if not feat_cols:
-        return None
-    imp_df = pd.DataFrame({
-        "feature":    feat_cols,
-        "importance": model.feature_importances_,
-    }).sort_values("importance", ascending=True).tail(15)
-    fig = px.bar(
-        imp_df, x="importance", y="feature", orientation="h",
-        title="Top 15 Feature Importance",
-        color="importance", color_continuous_scale="Blues",
-    )
-    fig.update_layout(
-        height=450, showlegend=False,
-        coloraxis_showscale=False,
-        margin=dict(l=10, r=10, t=50, b=10),
-    )
-    return fig
-
-def get_model_params(model) -> dict:
-    try:
-        return model.get_params()
-    except Exception:
-        pass
-    try:
-        booster  = model.get_booster()
-        cfg      = json.loads(booster.save_config())
-        tree_cfg = (cfg.get("learner", {})
-                       .get("gradient_booster", {})
-                       .get("tree_train_param", {}))
-        return {
-            "n_estimators":  booster.num_boosted_rounds(),
-            "max_depth":     tree_cfg.get("max_depth", "—"),
-            "learning_rate": (cfg.get("learner", {})
-                                 .get("learner_train_param", {})
-                                 .get("learning_rate", "—")),
-            "subsample":     tree_cfg.get("subsample", "—"),
-        }
-    except Exception:
-        return {}
-
+# ─── Sidebar ──────────────────────────────────────────────────────────────────
 def build_sidebar() -> dict:
     with st.sidebar:
         st.title("🎓 Student Score Predictor")
         st.markdown("---")
         st.markdown("### 👤 Öğrenci Bilgileri")
-        age              = st.number_input("Age",                     17,   24,  20)
         gender           = st.selectbox("Gender",            CATEGORY_OPTIONS["gender"])
         course           = st.selectbox("Course",            CATEGORY_OPTIONS["course"])
-        study_hours      = st.slider("Study Hours / Day",    0.0,  10.0,  4.0, 0.1)
-        class_attendance = st.slider("Class Attendance (%)", 40.0, 99.4, 72.0, 0.5)
+        study_hours      = st.slider("Study Hours / Day",    0.0,  7.91,  4.0, 0.01)
+        class_attendance = st.slider("Class Attendance (%)", 40.6, 99.4,  72.0, 0.1)
         sleep_hours      = st.slider("Sleep Hours / Day",    4.1,   9.9,  7.0, 0.1)
         st.markdown("### 📋 Diğer Bilgiler")
         sleep_quality   = st.selectbox("Sleep Quality",     CATEGORY_OPTIONS["sleep_quality"])
-        internet_access = st.selectbox("Internet Access",   CATEGORY_OPTIONS["internet_access"])
         study_method    = st.selectbox("Study Method",      CATEGORY_OPTIONS["study_method"])
         facility_rating = st.selectbox("Facility Rating",   CATEGORY_OPTIONS["facility_rating"])
         exam_difficulty = st.selectbox("Exam Difficulty",   CATEGORY_OPTIONS["exam_difficulty"])
@@ -200,32 +222,31 @@ def build_sidebar() -> dict:
 
     return {
         "payload": {
-            "age": age, "gender": gender, "course": course,
+            "gender": gender, "course": course,
             "study_hours": study_hours, "class_attendance": class_attendance,
             "sleep_hours": sleep_hours, "sleep_quality": sleep_quality,
-            "internet_access": internet_access, "study_method": study_method,
+            "study_method": study_method,
             "facility_rating": facility_rating, "exam_difficulty": exam_difficulty,
         },
         "predict_clicked": predict_clicked,
     }
 
+# ─── Ana Fonksiyon ────────────────────────────────────────────────────────────
 def main():
-    model, encoders = load_artifacts()
-    sidebar         = build_sidebar()
-    payload         = sidebar["payload"]
+    model = load_model()
+    sidebar = build_sidebar()
+    payload = sidebar["payload"]
     predict_clicked = sidebar["predict_clicked"]
 
-    if model is None or encoders is None:
+    if model is None:
         st.error(
-            "⚠️ **Model dosyaları bulunamadı!**\n\n"
-            "`models/xgb_model.joblib` ve `models/encoders.joblib` "
-            "dosyalarının mevcut olduğundan emin ol.\n\n"
-            "```bash\npython save_model.py\n```"
+            "⚠️ **Model dosyası bulunamadı!**\n\n"
+            "`models/testscore_model.keras` dosyasının mevcut olduğundan emin ol."
         )
         st.stop()
 
-    features = prepare_input(payload, encoders)
-    score    = float(np.clip(model.predict(features)[0], 0, 100))
+    features = prepare_input(payload)
+    score    = float(np.clip(model.predict(features, verbose=0)[0][0], 0, 100))
     perf     = classify_performance(score)
     grade    = assign_grade(score)
 
@@ -254,16 +275,16 @@ def main():
         st.dataframe(
             pd.DataFrame({
                 "Özellik": [
-                    "Yaş", "Cinsiyet", "Bölüm", "Günlük Ders Saati",
+                    "Cinsiyet", "Bölüm", "Günlük Ders Saati",
                     "Devam Oranı", "Uyku Saati", "Uyku Kalitesi",
-                    "İnternet", "Çalışma Yöntemi", "Tesis Kalitesi", "Sınav Zorluğu",
+                    "Çalışma Yöntemi", "Tesis Kalitesi", "Sınav Zorluğu",
                 ],
                 "Değer": [
-                    payload["age"],              payload["gender"],
-                    payload["course"],           f"{payload['study_hours']} saat",
+                    payload["gender"],           payload["course"],
+                    f"{payload['study_hours']} saat",
                     f"%{payload['class_attendance']}",
                     f"{payload['sleep_hours']} saat",
-                    payload["sleep_quality"],    payload["internet_access"],
+                    payload["sleep_quality"],
                     payload["study_method"],     payload["facility_rating"],
                     payload["exam_difficulty"],
                 ],
@@ -273,25 +294,15 @@ def main():
         )
 
     st.markdown("---")
-
-    st.markdown("#### 🔬 Feature Importance")
-    fig_imp = create_feature_importance(model, encoders)
-    if fig_imp:
-        st.plotly_chart(fig_imp, use_container_width=True)
-
-    with st.expander("⚙️ Model Parametreleri"):
-        params = get_model_params(model)
-        if params:
-            p1, p2, p3, p4 = st.columns(4)
-            p1.metric("n_estimators",  params.get("n_estimators",  "—"))
-            p2.metric("max_depth",     params.get("max_depth",     "—"))
-            p3.metric("learning_rate", params.get("learning_rate", "—"))
-            p4.metric("subsample",     params.get("subsample",     "—"))
-        st.caption("Model tipi: XGBoost Regressor")
+    st.markdown("#### ℹ️ Model Bilgisi")
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Model Tipi",   "Deep Learning (Keras)")
+    col_b.metric("Katman Sayısı", "5 Dense")
+    col_c.metric("Loss Fonksiyonu", "MSE")
 
     st.markdown("---")
     st.caption(
-        "Powered by XGBoost & Streamlit | "
+        "Powered by TensorFlow/Keras & Streamlit | "
         "[GitHub](https://github.com/tugcesi/predicting-student-test-scores)"
     )
 
